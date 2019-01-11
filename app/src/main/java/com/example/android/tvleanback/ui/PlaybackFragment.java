@@ -22,6 +22,10 @@ import android.database.Cursor;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.view.LayoutInflater;
+import android.view.View;
+import android.view.ViewGroup;
+
 import androidx.leanback.app.VideoFragment;
 import androidx.leanback.app.VideoFragmentGlueHost;
 import androidx.leanback.app.VideoSupportFragment;
@@ -50,12 +54,14 @@ import com.example.android.tvleanback.model.Video;
 import com.example.android.tvleanback.model.VideoCursorMapper;
 import com.example.android.tvleanback.player.VideoPlayerGlue;
 import com.example.android.tvleanback.presenter.CardPresenter;
+import com.google.ads.interactivemedia.v3.api.AdEvent;
 import com.google.android.exoplayer2.ExoPlayerFactory;
 import com.google.android.exoplayer2.SimpleExoPlayer;
+import com.google.android.exoplayer2.ext.ima.ImaAdsLoader;
 import com.google.android.exoplayer2.ext.leanback.LeanbackPlayerAdapter;
-import com.google.android.exoplayer2.extractor.DefaultExtractorsFactory;
 import com.google.android.exoplayer2.source.ExtractorMediaSource;
 import com.google.android.exoplayer2.source.MediaSource;
+import com.google.android.exoplayer2.source.ads.AdsMediaSource;
 import com.google.android.exoplayer2.trackselection.AdaptiveTrackSelection;
 import com.google.android.exoplayer2.trackselection.DefaultTrackSelector;
 import com.google.android.exoplayer2.trackselection.TrackSelection;
@@ -73,11 +79,13 @@ import static com.example.android.tvleanback.ui.PlaybackFragment.VideoLoaderCall
  */
 public class PlaybackFragment extends VideoSupportFragment {
 
+    private static final String SAMPLE_AD_TAG = "https://pubads.g.doubleclick.net/gampad/ads?sz=640x480&iu=/124319096/external/single_ad_samples&ciu_szs=300x250&impl=s&gdfp_req=1&env=vp&output=vast&unviewed_position_start=1&cust_params=deployment%3Ddevsite%26sample_ct%3Dlinear&correlator=";
     private static final int UPDATE_DELAY = 16;
 
     private VideoPlayerGlue mPlayerGlue;
     private LeanbackPlayerAdapter mPlayerAdapter;
     private SimpleExoPlayer mPlayer;
+    private ViewGroup mPlayerView;
     private TrackSelector mTrackSelector;
     private PlaylistActionListener mPlaylistActionListener;
 
@@ -102,6 +110,12 @@ public class PlaybackFragment extends VideoSupportFragment {
                 .initLoader(VideoLoaderCallbacks.QUEUE_VIDEOS_LOADER, args, mVideoLoaderCallbacks);
 
         mVideoCursorAdapter = setupRelatedVideosCursor();
+    }
+
+    @Override
+    public View onCreateView(LayoutInflater inflater, ViewGroup container, Bundle savedInstanceState) {
+        mPlayerView = (ViewGroup) super.onCreateView(inflater, container, savedInstanceState);
+        return mPlayerView;
     }
 
     @Override
@@ -181,15 +195,29 @@ public class PlaybackFragment extends VideoSupportFragment {
 
     private void prepareMediaForPlaying(Uri mediaSourceUri) {
         String userAgent = Util.getUserAgent(getActivity(), "VideoPlayerGlue");
-        MediaSource mediaSource =
-                new ExtractorMediaSource(
-                        mediaSourceUri,
-                        new DefaultDataSourceFactory(getActivity(), userAgent),
-                        new DefaultExtractorsFactory(),
-                        null,
-                        null);
 
-        mPlayer.prepare(mediaSource);
+        MediaSource mediaSource = new ExtractorMediaSource.Factory(
+                new DefaultDataSourceFactory(getActivity(), userAgent))
+                .createMediaSource(mediaSourceUri);
+
+        ImaAdsLoader imaAdsLoader = new ImaAdsLoader.Builder(getActivity())
+                .setAdEventListener(new AdEventListener())
+                .buildForAdTag(Uri.parse(SAMPLE_AD_TAG));
+
+        MediaSource adsMediaSource = new AdsMediaSource(
+                mediaSource,
+                newDataSourceFactory(userAgent),
+                imaAdsLoader,
+                mPlayerView);
+
+        mPlayer.prepare(adsMediaSource);
+    }
+
+    private DefaultDataSourceFactory newDataSourceFactory(String userAgent) {
+        return new DefaultDataSourceFactory(
+                getActivity(),
+                userAgent,
+                new DefaultBandwidthMeter());
     }
 
     private ArrayObjectAdapter initializeRelatedVideosRow() {
@@ -243,6 +271,24 @@ public class PlaybackFragment extends VideoSupportFragment {
 
     public void fastForward() {
         mPlayerGlue.fastForward();
+    }
+
+    private final class AdEventListener implements AdEvent.AdEventListener {
+
+        @Override
+        public void onAdEvent(AdEvent adEvent) {
+            switch (adEvent.getType()) {
+                case CONTENT_PAUSE_REQUESTED:
+                    hideControlsOverlay(false);
+                    break;
+                case CONTENT_RESUME_REQUESTED:
+                    setControlsOverlayAutoHideEnabled(true);
+                    showControlsOverlay(true);
+                    break;
+                default:
+                    break;
+            }
+        }
     }
 
     /** Opens the video details page when a related video has been clicked. */
